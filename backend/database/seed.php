@@ -42,7 +42,9 @@ $adminUser=['id'=>$adminId,'role'=>'admin'];
 $sources=[['local','Entrada local','local','Token WEBHOOK_TOKEN'],['site','Site e formulários','awaiting_credentials','URL/formato do formulário e segredo de assinatura'],['olx','OLX/Canal Pro','awaiting_credentials','Documentação da API, credenciais e formato/assinatura do webhook'],['quintoandar','QuintoAndar','awaiting_credentials','Documentação, credenciais e permissões da conta'],['whatsapp','WhatsApp oficial','awaiting_credentials','Meta Business, WABA, número, token e segredo do app'],['email','E-mail','awaiting_credentials','Provedor, OAuth/IMAP e regras de consentimento'],['social','Redes sociais','awaiting_credentials','Plataformas, contas comerciais, apps e permissões'],['partner','Outros portais/parceiros','awaiting_credentials','Documentação e credenciais de cada parceiro']];
 $q=$pdo->prepare('INSERT INTO lead_sources(id,code,name,connector_status,requirements) VALUES(?,?,?,?,?)');
 $sourceIdByCode=[];
-foreach($sources as $s){$id=uid();$q->execute([$id,...$s]);$sourceIdByCode[$s[0]]=$id;}
+// a migration 013 já cria as origens; aqui só completa as que faltarem (compatível com bancos antigos)
+$find=$pdo->prepare('SELECT id FROM lead_sources WHERE code=?');
+foreach($sources as $s){$find->execute([$s[0]]);$id=$find->fetchColumn();if(!$id){$id=uid();$q->execute([$id,...$s]);}$sourceIdByCode[$s[0]]=$id;}
 
 // 3) fluxos de automação (compra/locação originais + um de dúvidas com transferência humana)
 $leadSvc=new LeadService($pdo);

@@ -1,0 +1,81 @@
+# IMOB HUB — deploy com Coolify (Docker Compose). Só o serviço "web" recebe domínio/porta pública.
+# O docker-compose.yml da raiz continua sendo o do desenvolvimento local (apenas MySQL).
+# Variáveis marcadas com :? são obrigatórias; cadastre-as no Coolify (veja "Deploy com Coolify" no README).
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - uploads:/srv/uploads:ro
+    depends_on:
+      php:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  php:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "9000"
+    environment:
+      DB_DSN: "mysql:host=mysql;port=3306;dbname=${MYSQL_DATABASE:-imob_hub};charset=utf8mb4"
+      DB_USER: ${MYSQL_USER:-imob_hub}
+      DB_PASS: ${MYSQL_PASSWORD:?Defina MYSQL_PASSWORD}
+      APP_URL: ${APP_URL:?Defina APP_URL (URL pública, ex. https://imob.seudominio.com.br)}
+      FRONTEND_URL: ${APP_URL}
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/Sao_Paulo}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?Defina APP_ENCRYPTION_KEY (32+ caracteres aleatórios; guarde em cofre)}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:?Defina WEBHOOK_TOKEN}
+      CONNECTOR_INTERNAL_TOKEN: ${CONNECTOR_INTERNAL_TOKEN:-}
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-10485760}
+      PRIVATE_STORAGE_PATH: /var/www/private-storage
+      DOCUMENSO_URL: ${DOCUMENSO_URL:-}
+      DOCUMENSO_API_KEY: ${DOCUMENSO_API_KEY:-}
+      DOCUMENSO_WEBHOOK_SECRET: ${DOCUMENSO_WEBHOOK_SECRET:-}
+    volumes:
+      - uploads:/var/www/html/backend/public/uploads
+      - private-storage:/var/www/private-storage
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000 | grep -q pong"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-imob_hub}
+      MYSQL_USER: ${MYSQL_USER:-imob_hub}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Defina MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Defina MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # Só responde por TCP depois da inicialização completa (o servidor temporário do entrypoint não abre rede).
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  mysql-data:
+  uploads:
+  private-storage:

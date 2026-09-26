@@ -13,3 +13,4 @@ docker/documenso/.env
 docker/documenso/cert.p12
 backend/private-storage/
 .claude/settings.local.json
+docker/coolify.env

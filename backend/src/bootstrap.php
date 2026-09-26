@@ -116,3 +116,30 @@ function store_private_upload(array $file, array $allowed=['application/pdf'=>'p
     chmod($target,0600);
     return [$name,$mime,(int)$file['size'],hash_file('sha256',$target)];
 }
+
+/** Regra única de criação de usuário (tela Equipe e backend/bin/create_admin.php). Retorna o id criado. */
+function create_user(array $d): string {
+    validate_required($d,['name','email','role','password']);
+    if(!in_array($d['role'],['admin','manager','sdr','broker','analyst'],true))throw new InvalidArgumentException('Papel inválido.');
+    if(strlen($d['password'])<8)throw new InvalidArgumentException('A senha deve ter ao menos 8 caracteres.');
+    $q=db()->prepare('SELECT 1 FROM users WHERE email=?');$q->execute([$d['email']]);
+    if($q->fetchColumn())throw new InvalidArgumentException('Já existe um usuário com este e-mail.');
+    $id=uid();
+    db()->prepare('INSERT INTO users(id,name,email,password_hash,role,creci) VALUES(?,?,?,?,?,?)')->execute([$id,$d['name'],$d['email'],password_hash($d['password'],PASSWORD_DEFAULT),$d['role'],trim((string)($d['creci']??''))?:null]);
+    return $id;
+}
+
+/**
+ * Falha inesperada (banco, PHP, infraestrutura): resposta pública genérica com um código de ocorrência;
+ * o detalhe técnico (mensagem, SQL, arquivo, stack trace) vai só para o log do servidor.
+ * A aplicação sinaliza "não encontrado" com RuntimeException da própria classe; subclasses internas (ex.: PDOException) caem aqui.
+ */
+function internal_error(Throwable $e): never {
+    respond(['message'=>'Erro interno. Consulte os logs do servidor.','error_id'=>log_internal_error($e)],500);
+}
+/** Registra o detalhe técnico no log do servidor e devolve o código curto que aparece para o usuário. */
+function log_internal_error(Throwable $e): string {
+    $ref=bin2hex(random_bytes(4));
+    error_log(sprintf('[erro %s] %s %s — %s',$ref,$_SERVER['REQUEST_METHOD']??'CLI',(string)parse_url($_SERVER['REQUEST_URI']??'',PHP_URL_PATH),$e->__toString()));
+    return $ref;
+}

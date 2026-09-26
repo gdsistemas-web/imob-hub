@@ -1,0 +1,17 @@
+# Nada de segredos, dados de usuário ou artefatos locais dentro das imagens
+.git
+.claude
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+frontend/dist
+**/*.tsbuildinfo
+**/*.sqlite
+backend/public/uploads
+backend/private-storage
+backend/storage
+connector-pam
+docker/documenso
+Ref Front.png
+docker/coolify.env

@@ -35,6 +35,117 @@ npm run dev
 
 Acesse `http://localhost:5173` para o site público e `http://localhost:5173/login` (ou **Área do corretor**) para o painel, que fica em `/painel`. Para produção, sirva `frontend/dist` (gerado por `npm run build`) e aponte `/api` para `backend/public` sob HTTPS. O PHP embutido é apenas para desenvolvimento.
 
+## Deploy com Coolify
+
+A stack de produção fica em `compose.coolify.yml`. Ela é uma **opção adicional**: o desenvolvimento local continua igual (`docker compose up -d mysql` + `php -S` + `npm run dev`), e o `docker-compose.yml` da raiz segue sendo só o MySQL de desenvolvimento.
+
+### 1. Requisitos
+
+Servidor Linux com Docker e Coolify v4. O repositório precisa estar acessível pelo Coolify, e o branch é `main`. Você vai precisar de um domínio apontando para o servidor, porque o Coolify emite o certificado HTTPS.
+
+### 2. Arquitetura (`compose.coolify.yml`)
+
+| Serviço | Imagem | Função | Porta |
+|---|---|---|---|
+| `web` | `docker/nginx/Dockerfile` (Node 22 compila o React; imagem final `nginx-unprivileged`) | Serve o SPA com fallback para `index.html`, repassa `/api/*` ao PHP-FPM e serve `/uploads/*` (só imagens) | 8080, **a única publicada** (via proxy do Coolify) |
+| `php` | `docker/php/Dockerfile` (`php:8.3-fpm` + pdo_mysql, gd, exif e opcache) | API existente, pelo front controller `backend/public/index.php` | 9000, só na rede interna |
+| `mysql` | `mysql:8.0` | Banco | 3306, só na rede interna |
+
+O Nginx entrega ao PHP apenas o `index.php`; nenhum outro arquivo do backend fica acessível. Os dois containers de aplicação rodam sem root (`www-data` e `nginx`). O backend não tem dependências Composer, então não há `composer install`. `display_errors` fica desligado e os erros vão para o log do container. Os healthchecks são: `mysqladmin ping`; `ping` do PHP-FPM (via `cgi-fcgi`, sem rota pública nova); e resposta HTTP do Nginx. Cada serviço só sobe depois que o anterior está saudável.
+
+### 3. Variáveis de ambiente (cadastrar no Coolify)
+
+| Variável | Obrigatória | Observação |
+|---|---|---|
+| `APP_URL` | sim | URL pública com `https://`. É usada nos links das fotos e no CORS. |
+| `MYSQL_PASSWORD` | sim | Senha do usuário da aplicação. |
+| `MYSQL_ROOT_PASSWORD` | sim | Senha do root do MySQL. |
+| `APP_ENCRYPTION_KEY` | sim | 32+ caracteres (`openssl rand -hex 32`). Cifra os dados das fichas: **guarde em cofre e nunca troque** depois de haver dados. |
+| `WEBHOOK_TOKEN` | sim | Token do webhook de leads (`/api/webhooks/local`). |
+| `MYSQL_DATABASE`, `MYSQL_USER` | não | Padrão `imob_hub`. |
+| `APP_TIMEZONE` | não | Padrão `America/Sao_Paulo`. |
+| `UPLOAD_MAX_BYTES` | não | Padrão 10485760 (10 MB). O Nginx aceita até 14 MB por requisição. |
+| `CONNECTOR_INTERNAL_TOKEN` | não | Só se usar o conector de WhatsApp. |
+| `DOCUMENSO_URL`, `DOCUMENSO_API_KEY`, `DOCUMENSO_WEBHOOK_SECRET` | não | Integração de assinatura. Sem elas, os contratos seguem pelo fluxo manual. O Documenso é implantado à parte. |
+
+O banco é acessado pelo nome do serviço (`mysql`), montado no `DB_DSN` pelo próprio compose. `PRIVATE_STORAGE_PATH` também é fixado pelo compose. A lista com valores de exemplo está em `docker/coolify.env.example`. Nenhum segredo real fica no repositório.
+
+### 4. Criar o recurso no Coolify
+
+1. **+ New → Resource → Public Repository** (ou *Private Repository (GitHub App)*, se o repositório for privado) e informe `https://github.com/gdsistemas-web/imob-hub`.
+2. **Branch:** `main`. **Build Pack:** `Docker Compose`. **Base Directory:** `/`. **Docker Compose Location:** `/compose.coolify.yml`.
+3. Na lista de serviços, **apenas em `web`**, preencha o domínio **com a porta do container**, por exemplo `https://imob.seudominio.com.br:8080`. Deixe `php` e `mysql` sem domínio.
+4. Em **Environment Variables**, preencha as obrigatórias da tabela acima. O Coolify lista as variáveis que encontra no compose.
+
+### 5. Primeiro deploy
+
+Clique em **Deploy**. O Coolify constrói as imagens `web` e `php`, sobe o MySQL e aguarda os healthchecks. Depois, pelo **Terminal** do Coolify, no container `php`:
+
+```bash
+php backend/database/migrate.php      # cria as tabelas e os dados estruturais (ex.: origens de lead)
+php backend/bin/create_admin.php      # cria o primeiro administrador (interativo; a senha não aparece na tela)
+```
+
+Os demais usuários (gestores, SDRs, corretores e analistas) são criados pelo administrador em **Equipe e distribuição**.
+
+> **Não use `backend/database/seed.php` em produção.** Ele serve só para desenvolvimento e homologação: cria usuários de demonstração com a senha conhecida `Demo@123`, leads e imóveis fictícios, e não é idempotente. O banco de produção não depende dele.
+
+### 6. Migrations (ação manual)
+
+Pelo **Terminal** do Coolify, no container `php` (o diretório de trabalho é `/var/www/html`):
+
+```bash
+php backend/database/migrate.php
+```
+
+O migrador registra cada arquivo em `schema_migrations` e ignora os já aplicados, então pode ser rodado a cada deploy que traga migrations novas. Faça backup do banco antes. A migration `013_lead_sources.sql` cria as origens de lead (local, site, whatsapp, olx, quintoandar, email, social, partner) apenas quando o código ainda não existe; ela nunca altera origens já gravadas.
+
+`create_admin.php` também pode ser usado depois, para criar outro administrador. Ele aplica a mesma regra da tela Equipe (senha com ao menos 8 caracteres e e-mail único) e recusa e-mails já cadastrados.
+
+**Erros internos:** falhas inesperadas (banco fora do ar, erro de SQL etc.) respondem `500` com mensagem genérica e um `error_id`. O detalhe técnico fica só no log do `php`, na linha `[erro <error_id>]`.
+
+**Notificações de prazo:** em *Scheduled Tasks*, crie uma tarefa no container `php` com o comando `php backend/bin/generate_notifications.php` e a frequência `*/10 * * * *`.
+
+### 7. Volumes persistentes
+
+| Volume | Montado em | Conteúdo |
+|---|---|---|
+| `mysql-data` | `mysql:/var/lib/mysql` | Banco de dados |
+| `uploads` | `php:/var/www/html/backend/public/uploads` (e `web:/srv/uploads`, somente leitura) | Fotos dos imóveis (públicas) |
+| `private-storage` | `php:/var/www/private-storage` | Documentos das fichas e contratos (PDF gerado e assinado). Nunca é servido pelo Nginx. |
+
+Os três precisam entrar na rotina de backup. O código da aplicação faz parte da imagem e não é montado como volume.
+
+### 8. Logs
+
+Use a aba **Logs** de cada serviço no Coolify. Erros do PHP e acessos do FPM saem no log do `php`; requisições e erros de proxy, no do `web`. No servidor: `docker logs -f <container>`.
+
+### 9. Redeploy
+
+Com um push no `main`, use **Redeploy** (ou ative o deploy automático por webhook do Git). As imagens são reconstruídas e os volumes preservados. Se o deploy trouxer migrations novas, rode `php backend/database/migrate.php` depois.
+
+### 10. Desenvolvimento local × Coolify
+
+| | Desenvolvimento | Coolify |
+|---|---|---|
+| Frontend | `npm run dev` (Vite, porta 5173, proxy de `/api`) | Build de produção servido pelo Nginx |
+| Backend | `php -S localhost:8080 … router.php` | PHP-FPM atrás do Nginx |
+| Banco | `docker compose up -d mysql` (porta 3306 aberta no host) | MySQL interno, sem porta publicada |
+| Configuração | `backend/.env` | Variáveis de ambiente do Coolify |
+| Arquivos | `backend/public/uploads` e `PRIVATE_STORAGE_PATH` locais | Volumes `uploads` e `private-storage` |
+
+**Testar a stack de produção na sua máquina** (com Docker disponível para o usuário):
+
+```bash
+cp docker/coolify.env.example docker/coolify.env   # troque as senhas; o arquivo é ignorado pelo Git
+docker compose -f compose.coolify.yml -f docker/compose.local.yml --env-file docker/coolify.env up -d --build
+docker compose -f compose.coolify.yml -f docker/compose.local.yml --env-file docker/coolify.env exec php php backend/database/migrate.php
+docker compose -f compose.coolify.yml -f docker/compose.local.yml --env-file docker/coolify.env exec php php backend/bin/create_admin.php
+# acesse http://localhost:8088
+```
+
+O `docker/compose.local.yml` apenas publica o `web` em `127.0.0.1:8088`. Não o use no Coolify.
+
 ## Usuários de demonstração
 
 Senha de todos: `Demo@123`.
