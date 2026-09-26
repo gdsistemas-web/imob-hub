@@ -1,0 +1,1 @@
+CREATE TABLE property_photos (id CHAR(32) PRIMARY KEY,property_id CHAR(32) NOT NULL,storage_name VARCHAR(150) NOT NULL,original_name VARCHAR(255) NOT NULL,sort_order INT NOT NULL DEFAULT 0,is_cover TINYINT(1) NOT NULL DEFAULT 0,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(property_id) REFERENCES properties(id) ON DELETE CASCADE,INDEX(property_id,sort_order));

@@ -1,0 +1,15 @@
+.env
+backend/.env
+frontend/.env
+frontend/node_modules/
+frontend/dist/
+*.sqlite
+*.tsbuildinfo
+backend/storage/
+backend/public/uploads/
+connector-pam/vendor/
+connector-pam/.sessions/
+docker/documenso/.env
+docker/documenso/cert.p12
+backend/private-storage/
+.claude/settings.local.json

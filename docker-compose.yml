@@ -1,0 +1,13 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: imob_hub
+      MYSQL_USER: imob_hub
+      MYSQL_PASSWORD: imob_hub_local
+      MYSQL_ROOT_PASSWORD: root_local
+    ports: ["3306:3306"]
+    volumes: [mysql_data:/var/lib/mysql]
+    healthcheck: {test: ["CMD", "mysqladmin", "ping", "-h", "localhost"], interval: 5s, timeout: 5s, retries: 15}
+volumes: {mysql_data: {}}
+

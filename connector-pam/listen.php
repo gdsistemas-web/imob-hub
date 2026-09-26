@@ -1,0 +1,9 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/vendor/autoload.php';
+use Pam\WhatsApp\Auth\LocalAuth;use Pam\WhatsApp\Auth\LocalAuthOptions;use Pam\WhatsApp\Client;use Pam\WhatsApp\ClientOptions;use Pam\WhatsApp\Event\MessageReceived;use Pam\WhatsApp\Event\QrCodeReceived;use Pam\WhatsApp\Event\Ready;use Pam\WhatsApp\TerminalQrCode;
+$crm=getenv('CRM_INTERNAL_URL')?:'http://127.0.0.1:8080/api/internal/messages';$token=getenv('CONNECTOR_INTERNAL_TOKEN')?:throw new RuntimeException('CONNECTOR_INTERNAL_TOKEN ausente');$session=getenv('PAM_SESSION_PATH')?:__DIR__.'/.sessions';
+$post=function(array $payload)use($crm,$token):array{$ch=curl_init($crm);curl_setopt_array($ch,[CURLOPT_POST=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_HTTPHEADER=>['Content-Type: application/json','X-Connector-Token: '.$token],CURLOPT_POSTFIELDS=>json_encode($payload),CURLOPT_TIMEOUT=>20]);$body=curl_exec($ch);if($body===false)throw new RuntimeException(curl_error($ch));$status=curl_getinfo($ch,CURLINFO_RESPONSE_CODE);curl_close($ch);if($status>=400)throw new RuntimeException('CRM respondeu HTTP '.$status);return json_decode($body,true)?:[];};
+$client=new Client(new ClientOptions(authStrategy:new LocalAuth(new LocalAuthOptions(clientId:'vln-main',dataPath:$session)),autoReconnect:true,reconnectMaxAttempts:5,reconnectDelayMs:1000));
+$client->onQrCode(static function(QrCodeReceived $e):void{echo "\nEstado: aguardando QR\n".TerminalQrCode::render($e->code)."\n";});$client->onReady(static function(Ready $e):void{echo "Estado: conectado\n";});
+$client->onMessage(function(MessageReceived $e)use($client,$post):void{$m=$e->message;if($m->body==='')return;try{$result=$post(['provider'=>'pam','external_message_id'=>(string)$m->id,'conversation_id'=>$m->from,'message'=>$m->body]);foreach($result['replies']??[] as $reply)$client->sendMessage($m->from,$reply);}catch(Throwable $x){fwrite(STDERR,'Falha controlada: '.$x->getMessage()."\n");}});$client->initialize();$client->run();
